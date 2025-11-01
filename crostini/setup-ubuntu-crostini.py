@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """
-setup-ubuntu-crostini.py – Silent, Developer-First Crostini Integration
+setup-ubuntu-crostini.py – Crostini Ubuntu 24.04 Integration (Nov 2025)
 
-* No dpkg spam
-* No marker files
-* No common tools
-* Only essential GUI/file/audio integration
-* Pre/post-reboot aware
-* 100% investigative
+* Milestone 141+ compatible (sparse repos OK)
+* No cros-ui-config (deprecated)
+* Silent, investigative, pre/post-reboot
+* cros-guest-tools + icons only
 """
 
 import os
@@ -15,20 +13,18 @@ import sys
 import subprocess
 import textwrap
 from pathlib import Path
+import glob
 
 # ----------------------------------------------------------------------
 # CONFIG
 # ----------------------------------------------------------------------
 CROS_REPO_BASE = "https://storage.googleapis.com/cros-packages"
 CROS_KEY_FINGERPRINT = "1397BC53640DB551"
-CROS_UI_CONFIG_PKG = "cros-ui-config"
-CROS_UI_FIXED_DEB = Path("cros-ui-config_fixed.deb")
 
 # ----------------------------------------------------------------------
 # UTILS
 # ----------------------------------------------------------------------
 def run(cmd, check=True, capture=False):
-    """Run command, capture stdout/stderr if needed, suppress all output."""
     print(f"$ {' '.join(map(str, cmd))}")
     return subprocess.run(
         cmd,
@@ -51,10 +47,9 @@ def print_banner(text):
     print("="*70 + "\n")
 
 # ----------------------------------------------------------------------
-# SILENT DETECTORS (no dpkg spam)
+# SILENT DETECTORS
 # ----------------------------------------------------------------------
 def _dpkg_status(pkg):
-    """Return True if package is installed, silently."""
     result = subprocess.run(
         ["dpkg-query", "-W", "-f", "${Status}", pkg],
         stdout=subprocess.DEVNULL,
@@ -86,9 +81,6 @@ def cros_key_present():
         return CROS_KEY_FINGERPRINT in out
     except:
         return False
-
-def cros_ui_config_patched():
-    return CROS_UI_FIXED_DEB.exists()
 
 def crostini_tools_installed():
     return _dpkg_status("cros-guest-tools") and _dpkg_status("adwaita-icon-theme-full")
@@ -141,32 +133,13 @@ def add_cros_repo():
         milestone = Path("/dev/.cros_milestone").read_text().strip()
     repo_file.write_text(f"deb {CROS_REPO_BASE}/{milestone} {milestone} main\n")
     run(["apt-key", "adv", "--keyserver", "keyserver.ubuntu.com", "--recv-keys", CROS_KEY_FINGERPRINT])
-
-def patch_cros_ui_config():
-    if CROS_UI_FIXED_DEB.exists():
-        return
-    run(["apt", "download", CROS_UI_CONFIG_PKG])
-    import glob
-    deb = next((f for f in glob.glob("cros-ui-config_*_all.deb")), None)
-    if not deb:
-        raise RuntimeError("cros-ui-config package not found")
-    run(["ar", "x", deb])
-    settings_path = "./etc/gtk-3.0/settings.ini"
-    if not Path(settings_path).exists():
-        raise RuntimeError("settings.ini not in package")
-    settings = Path(settings_path).read_text()
-    settings = settings.replace("InhibitAllGtkDialogs=1", "InhibitAllGtkDialogs=0")
-    Path("settings.ini").write_text(settings)
-    run(["gzip", "-c", "settings.ini"], capture=True)
-    files = [f for f in Path(".").iterdir() if f.name != "settings.ini"]
-    run(["tar", "czf", "data.tar.gz", "--transform", "s,^settings.ini,./etc/gtk-3.0/settings.ini,", "settings.ini", *files])
-    run(["ar", "r", deb, "debian-binary", "control.tar.xz", "data.tar.gz"])
-    run(["mv", deb, str(CROS_UI_FIXED_DEB)])
+    print(f"   Repo added for milestone {milestone} (sparse OK in 2025).")
+    run(["apt", "update"], check=False)  # Warns on no Release, but continues
 
 def install_crostini_tools():
-    run(["apt", "install", "-y", "cros-guest-tools", str(CROS_UI_FIXED_DEB)])
-    run(["apt", "install", "-y", "adwaita-icon-theme-full"])
-    CROS_UI_FIXED_DEB.unlink(missing_ok=True)
+    run(["apt", "install", "-y", "cros-guest-tools"])
+    run(["apt", "install", "-y", "adwaita-icon-theme-full", "-f"])  # -f fixes any deps
+    print("   [OK] Tools installed (file sharing, GUI, audio ready).")
 
 def apply_user_groups():
     script = Path.home() / "update-groups"
@@ -176,19 +149,18 @@ def apply_user_groups():
     script.unlink()
 
 def set_hostname():
-    default = "crostini"
+    default = "ubuntu-crostini"
     hn = input(f"Hostname [{default}]: ").strip() or default
     run(["hostnamectl", "set-hostname", hn])
 
 # ----------------------------------------------------------------------
-# REGISTER
+# REGISTER (No cros-ui-config Step)
 # ----------------------------------------------------------------------
 step("Fix GPG Keys", "Import missing keys", fix_gpg_keys, detector=gpg_keys_present)
 step("Capture Groups", "Save default user groups", capture_groups, detector=groups_script_exists)
 step("Remove Default User", "Delete ubuntu cloud-init user", remove_default_user, detector=default_user_removed)
-step("Add Crostini Repo", "Enable cros-packages", add_cros_repo, detector=lambda: cros_repo_present() and cros_key_present())
-step("Patch cros-ui-config", "Fix GTK dialog lock", patch_cros_ui_config, detector=cros_ui_config_patched)
-step("Install Crostini Tools", "cros-guest-tools + icons", install_crostini_tools, detector=crostini_tools_installed)
+step("Add Crostini Repo", "Enable cros-packages (non-blocking)", add_cros_repo, detector=lambda: cros_repo_present() and cros_key_present())
+step("Install Crostini Tools", "cros-guest-tools + icons (no config patch)", install_crostini_tools, detector=crostini_tools_installed)
 step("Apply Groups", "Restore groups post-reboot", apply_user_groups, pre_reboot=False, detector=lambda: not groups_script_exists())
 step("Set Hostname", "Optional hostname", set_hostname, pre_reboot=False, detector=lambda: False)
 
@@ -196,7 +168,7 @@ step("Set Hostname", "Optional hostname", set_hostname, pre_reboot=False, detect
 # MAIN
 # ----------------------------------------------------------------------
 def main():
-    print_banner("Crostini Ubuntu Integration")
+    print_banner("Crostini Ubuntu 24.04 Integration (Nov 2025)")
     if os.geteuid() != 0:
         print("Run with sudo.")
         sys.exit(1)
@@ -239,7 +211,7 @@ def main():
         print("    sudo python3 setup-ubuntu-crostini.py")
     else:
         print_banner("COMPLETE")
-        print("Test: /mnt/chromeos/MyFiles, zenity --info")
+        print("Test: ls /mnt/chromeos/MyFiles, zenity --info --text='GTK OK?', firefox &")
 
 if __name__ == "__main__":
     main()
