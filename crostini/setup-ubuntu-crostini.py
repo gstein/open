@@ -11,8 +11,9 @@ setup-ubuntu-crostini.py – Crostini Ubuntu 24.04 (Nov 2025)
 import os
 import sys
 import subprocess
-import textwrap
 from pathlib import Path
+import argparse
+import grp
 
 # ----------------------------------------------------------------------
 # CONFIG
@@ -61,7 +62,19 @@ def _dpkg_status(pkg):
     return r.returncode == 0
 
 def groups_script_exists():
-    return UPDATE_GROUPS_FILE.exists()
+    try:
+        print('GROUPS:', grp.getgrnam('ubuntu'))
+    except KeyError:
+        print('The "ubuntu" group is missing. Assuming captured.')
+        return True
+
+    try:
+        return UPDATE_GROUPS_FILE.exists()
+    except PermissionError:
+        # Expected since we drop that into /root, and we may not be
+        # root right now. Assume that it does not exist.
+        print(f'WARNING: cannot detect existence: "{UPDATE_GROUPS_FILE}"')
+        return False
 
 def default_user_removed():
     return not Path("/home/ubuntu").exists()
@@ -75,6 +88,10 @@ def google_key_present():
 
 def crostini_tools_installed():
     return _dpkg_status("cros-guest-tools") and _dpkg_status("adwaita-icon-theme-full")
+
+def has_rebooted():
+    ### how do we tell? TBD. examine why reboot needed.
+    return False
 
 # ----------------------------------------------------------------------
 # STEPS
@@ -130,6 +147,9 @@ def install_crostini_tools():
     run(["apt", "install", "-y", "adwaita-icon-theme-full", "-f"])
     print("   [OK] Tools installed.")
 
+def perform_reboot():
+    print('### maybe invoked /sbin/reboot ??')
+
 def apply_user_groups():
     if not UPDATE_GROUPS_FILE.exists():
         raise RuntimeError("update-groups missing – run pre-reboot")
@@ -151,43 +171,45 @@ step("Capture Groups", "Save default user groups", capture_groups, detector=grou
 step("Remove Default User", "Delete ubuntu cloud-init user", remove_default_user, detector=default_user_removed)
 step("Add Crostini Repo", "Enable cros-packages (non-blocking)", add_cros_repo, detector=lambda: cros_repo_present() and google_key_present())
 step("Install Crostini Tools", "cros-guest-tools + icons", install_crostini_tools, detector=crostini_tools_installed)
+step("Reboot", "Reboot needed for <TBD?>", perform_reboot, detector=has_rebooted)
 step("Apply Groups", "Restore groups post-reboot", apply_user_groups, pre_reboot=False, detector=lambda: not groups_script_exists())
 step("Set Hostname", "Optional hostname", set_hostname, pre_reboot=False, detector=lambda: False)
 
 # ----------------------------------------------------------------------
 # MAIN
 # ----------------------------------------------------------------------
-def main():
+def main(argv):
     print_banner("Crostini Ubuntu 24.04 (Nov 2025)")
+
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--dry-run',
+                        action=argparse.BooleanOptionalAction,
+                        help="Display operations, but do not run them.")
+    args = parser.parse_args()
+    print('ARGS:', args)
+
     if os.geteuid() != 0:
-        print("Run with sudo.")
-        sys.exit(1)
+        print('WARNING: not ROOT. ... forcing --dry-run')
+        args.dry_run = False
 
-    pre = [s for s in STEPS if s["pre_reboot"]]
-    post = [s for s in STEPS if not s["pre_reboot"]]
+    completed = True  # assume all steps completed, turn off if not
+    print(f"\nSTEPS:")
+    for i, s in enumerate(STEPS, 1):
+        check = s['detector']()
+        completed &= check
+        status = "DONE" if check else "PENDING"
+        print(f"  [{i}] [{status:7s}] {s['name']:25s}    ({s['desc']})")
 
-    pre_done = all(s["detector"]() for s in pre)
-    post_done = all(s["detector"]() for s in post)
-
-    if pre_done and post_done:
-        print("All steps complete.")
-        return
-
-    pending = [s for s in (pre if not pre_done else post) if not s["detector"]()]
-    phase = "PRE-REBOOT" if not pre_done else "POST-REBOOT"
-
-    print(f"\n{phase} STEPS:")
-    for i, s in enumerate(pending, 1):
-        status = "DONE" if s["detector"]() else "PENDING"
-        print(f"  [{i}] [{status}] {s['name']}")
-        print(textwrap.indent(s['desc'], "      ") + "\n")
-
+    print('COMPLETED?', completed)
     if not confirm("Proceed?"):
         return
 
     for i, s in enumerate(pending, 1):
         print(f"\n[{i}/{len(pending)}] {s['name']}")
         try:
+            if args.dry_run:
+                print('[dry-run] SKIPPING:', s['name'])
+                continue
             s["func"]()
             print("   [OK]")
         except Exception as e:
@@ -205,4 +227,4 @@ def main():
         print("Test: ls /mnt/chromeos/MyFiles, zenity --info --text='OK', firefox &")
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
