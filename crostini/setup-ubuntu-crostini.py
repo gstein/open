@@ -18,6 +18,7 @@ from pathlib import Path
 # CONFIG
 # ----------------------------------------------------------------------
 CROS_REPO_BASE = "https://storage.googleapis.com/cros-packages"
+DEBIAN_NAME = "trixie"  # underlies 24.04
 TERMINA_DEB = Path("/opt/google/cros-containers/cros-guest-tools.deb")
 UPDATE_GROUPS_FILE = Path("/root/update-groups")
 GOOGLE_KEY_URL = "https://dl.google.com/linux/linux_signing_key.pub"
@@ -113,7 +114,7 @@ def remove_default_user():
 def add_cros_repo():
     repo_file = Path("/etc/apt/sources.list.d/cros.list")
     milestone = Path("/dev/.cros_milestone").read_text().strip() if Path("/dev/.cros_milestone").exists() else "stretch"
-    repo_file.write_text(f"deb {CROS_REPO_BASE}/{milestone} {milestone} main\n")
+    repo_file.write_text(f"deb {CROS_REPO_BASE}/{milestone} {DEBIAN_NAME} main\n")
     run(["wget", "-q", "-O", "-", GOOGLE_KEY_URL], capture=True)
     run(["tee", str(GOOGLE_KEY_FILE)])
     print(f"   Repo added for milestone {milestone} (sparse OK).")
