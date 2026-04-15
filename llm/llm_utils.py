@@ -178,27 +178,25 @@ output as follows:
 
 
 class OpenRouter:
-    # placeholder for formatter
-    HEADERS = {
-        "Authorization": f"Bearer {ROUTER_TOKEN}",
-        "Content-Type": "application/json",
-        "X-Title": "llm_utils",  ### TBD: include script/app name
-    }
+    def __init__(self, token):
+        self.token = token
+        self.headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "X-Title": "llm_utils",
+        }
 
-    URL_CHAT = "https://openrouter.ai/api/v1/chat/completions"
-    URL_LIMIT = "https://openrouter.ai/api/v1/auth/key"
-    URL_MODELS = "https://openrouter.ai/api/v1/models"
+        URL_CHAT = "https://openrouter.ai/api/v1/chat/completions"
+        URL_MODELS = "https://openrouter.ai/api/v1/models"
 
-    @classmethod
     @stopwatch.Stopwatch()
-    def invoke_llm(cls, payload):
-        # Delay import unless/until needed; it takes a while to import.
+    def invoke_llm(self, payload):
         import requests
 
         response = requests.post(
-            cls.URL_CHAT,
+            self.URL_CHAT,
             json=payload,
-            headers=cls.HEADERS,
+            headers=self.headers,
             timeout=300,
         )
         if response.status_code != 200:
@@ -214,7 +212,7 @@ class OpenRouter:
             raise Exception("empty response")
         # print('RESPONSE:', type(text))
 
-        return cls.parse(text)  # returns: content, reasoning
+        return self.parse(text)  # returns: content, reasoning
 
     @staticmethod
     def parse(text):
@@ -241,26 +239,10 @@ class OpenRouter:
 
         return msg.get("content", ""), msg.get("reasoning")
 
-    @classmethod
-    def fetch_context_length(cls, OR_id):
-        """
-        Fetch the advertised context length for a specified model from OpenRouter's API.
-
-        Args:
-            OR_id (str): The ID of the model (e.g., 'openai/gpt-4o').
-
-        Returns:
-            int: The context length of the model.
-
-        Raises:
-            requests.RequestException: If the API request fails.
-            KeyError: If the model is not found or the response lacks expected data.
-        """
-
-        # Delay import unless/until needed; it takes a while to import.
+    def fetch_context_length(self, OR_id):
         import requests
 
-        response = requests.get(cls.URL_MODELS, headers=cls.HEADERS)
+        response = requests.get(self.URL_MODELS, headers=self.headers)
         response.raise_for_status()
         models = response.json()["data"]
 
@@ -270,6 +252,14 @@ class OpenRouter:
                 return model["context_length"]
 
         raise KeyError(f"Model '{OR_id}' not found.")
+
+    def chat(self, model_id, system_prompt, messages):
+        payload = {
+            "model": model_id,
+            "messages": [{"role": "system", "content": system_prompt}] + messages,
+        }
+        content, _ = self.invoke_llm(payload)
+        return content
 
 
 def get_sorting_timestamp(timestamps, eps_days=7, min_samples=2):
