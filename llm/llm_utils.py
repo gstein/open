@@ -10,16 +10,11 @@ import pathlib
 import logging
 import datetime
 
-import yaml
-from easydict import EasyDict as edict
 
 import stopwatch
 
 _LOGGER = logging.getLogger(__name__)
 
-THIS_DIR = pathlib.Path(__file__).resolve().parent
-CFG = edict(yaml.safe_load(open(THIS_DIR / 'config.yaml')))
-ROUTER_TOKEN = CFG.router  # or maybe CFG.myrouter
 
 # Additional logging level for extra info we usually don't even want
 # during debugging runs.
@@ -28,13 +23,12 @@ DEBUG_EXTRA = 5
 
 class Model:
 
-    def __init__(self, model_name):
-        self.summary_cls = OpenRouter  ### parameterize to Ollama?
+    def __init__(self, model_id, tokenizer_id, tokenizer_token=None):
+        self.summary_cls = OpenRouter
 
-        model = CFG.LLMs[model_name]
-        self.summary_id = model.summary
-        self.token_id = model.tokenizer
-
+        self.summary_id = model_id
+        self.token_id = tokenizer_id
+        self.tokenizer_token = tokenizer_token
         self.summary_max = OpenRouter.fetch_context_length(self.summary_id)
         _LOGGER.info(f'Context length for "{self.summary_id}" is {self.summary_max} tokens')
         #self.token_max = OpenRouter.fetch_context_length(self.token_id)
@@ -59,7 +53,7 @@ class Model:
             self.tokenizer = transformers.AutoTokenizer.from_pretrained(
                 #local_files_only=True
                 self.token_id,
-                token=CFG.hf,  # if TOKEN_ID model needs authn (eg. llama)
+                token=self.tokenizer_token,
                 legacy=False,
             )
 
