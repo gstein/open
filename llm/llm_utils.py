@@ -178,6 +178,9 @@ output as follows:
 
 
 class OpenRouter:
+    URL_CHAT = "https://openrouter.ai/api/v1/chat/completions"
+    URL_MODELS = "https://openrouter.ai/api/v1/models"
+
     def __init__(self, token):
         self.token = token
         self.headers = {
@@ -186,11 +189,9 @@ class OpenRouter:
             "X-Title": "llm_utils",
         }
 
-        URL_CHAT = "https://openrouter.ai/api/v1/chat/completions"
-        URL_MODELS = "https://openrouter.ai/api/v1/models"
-
     @stopwatch.Stopwatch()
     def invoke_llm(self, payload):
+        # Delay import unless/until needed; it takes a while to import.
         import requests
 
         response = requests.post(
@@ -240,6 +241,19 @@ class OpenRouter:
         return msg.get("content", ""), msg.get("reasoning")
 
     def fetch_context_length(self, OR_id):
+        """
+        Fetch the advertised context length for a specified model from OpenRouter's API.
+
+        Args:
+            OR_id (str): The ID of the model (e.g., 'openai/gpt-4o').
+
+        Returns:
+            int: The context length of the model.
+
+        Raises:
+            requests.RequestException: If the API request fails.
+            KeyError: If the model is not found or the response lacks expected data.
+        """
         import requests
 
         response = requests.get(self.URL_MODELS, headers=self.headers)
@@ -258,8 +272,8 @@ class OpenRouter:
             "model": model_id,
             "messages": [{"role": "system", "content": system_prompt}] + messages,
         }
-        content, _ = self.invoke_llm(payload)
-        return content
+        content, reasoning = self.invoke_llm(payload)
+        return content, reasoning
 
 
 def get_sorting_timestamp(timestamps, eps_days=7, min_samples=2):
