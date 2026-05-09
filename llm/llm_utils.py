@@ -10,6 +10,8 @@ import pathlib
 import logging
 import datetime
 
+from easydict import EasyDict as edict
+
 
 import stopwatch
 
@@ -21,6 +23,10 @@ _LOGGER = logging.getLogger(__name__)
 DEBUG_EXTRA = 5
 
 
+def _not_implemented(*args, **kwargs):
+    raise NotImplementedError("sync methods removed; use async versions")
+
+
 class Model:
     def __init__(self, model_id, tokenizer_id, tokenizer_token=None):
         self.summary_cls = OpenRouter
@@ -28,7 +34,7 @@ class Model:
         self.summary_id = model_id
         self.token_id = tokenizer_id
         self.tokenizer_token = tokenizer_token
-        self.summary_max = OpenRouter.fetch_context_length(self.summary_id)
+        self.summary_max = asyncio.run(OpenRouter.get_context_limit(self.summary_id))
         _LOGGER.info(
             f'Context length for "{self.summary_id}" is {self.summary_max} tokens'
         )
@@ -75,9 +81,8 @@ class Model:
         )
         return count
 
-    def assemble_then_invoke(self, prompt, msgs, system=None):
-        "Summarize this chunk of messages."
-
+    async def complete(self, prompt, msgs, system=None):
+        """Generate a completion for the given prompt and messages."""
         if not system:
             system = getattr(self, "SYSTEM_PROMPT", None)
 
@@ -110,29 +115,25 @@ class Model:
             "model": self.summary_id,
             "messages": complete,
         }
-        return self.summary_cls.invoke_llm(payload)  # content, reasoning
+        return await self.summary_cls.invoke(payload)
+
+    assemble_then_invoke = _not_implemented
 
 
 class ChatSummarize(Model):
-    def summarize_chunk(self, msgs):
-        "Summarize this chunk of messages."
-
+    async def summarize_chunk(self, msgs):
         prompt = "Summarize the following conversation chunk."
-        return self.assemble_then_invoke(prompt, msgs)
+        return await self.complete(prompt, msgs)
 
-    def summarize_recent(self, msgs):
-        "Summarize the most recent chunk, in more detail."
-
+    async def summarize_recent(self, msgs):
         prompt = (
             "Summarize the following conversation chunk."
             " This is the most recent chunk, so provide greater"
             " detail in the Timeline and Key State sections."
         )
-        return self.assemble_then_invoke(prompt, msgs)
+        return await self.complete(prompt, msgs)
 
-    def summarize_arc(self, chunks):
-        "One overall summary of multiple chunks, forming a story arc."
-
+    async def summarize_arc(self, chunks):
         prompt = """
 
 Summarize the following conversation chunks into a single cohesive summary, prioritizing details from the most recent chunk (Chunk 3).
@@ -141,8 +142,7 @@ Chunk 2: [text]
 Chunk 3: [text]
 
         """
-        ### this is incorrect.
-        return self.assemble_then_invoke(prompt, msgs)
+        return await self.complete(prompt, chunks)
 
     SYSTEM_PROMPT = """
 You are an expert conversation summarizer. Your task is to analyze the
@@ -189,40 +189,11 @@ class OpenRouter:
             "X-Title": "llm_utils",
         }
 
-    @stopwatch.Stopwatch()
-    def invoke_llm(self, payload):
-        # Delay import unless/until needed; it takes a while to import.
-        import requests
-
-        response = requests.post(
-            self.URL_CHAT,
-            json=payload,
-            headers=self.headers,
-            timeout=300,
-        )
-        if response.status_code != 200:
-            _LOGGER.error(
-                f"LLM error ({response.status_code}):\n  >> BODY: {response.text}"
-            )
-            return None, response.text
-        # response.raise_for_status()
-
-        text = response.text.strip()
-        if not text:
-            _LOGGER.error("RESPONSE is empty (?)")
-            raise Exception("empty response")
-        # print('RESPONSE:', type(text))
-
-        return self.parse(text)  # returns: content, reasoning
-
     @staticmethod
     def parse(text):
-        # This has already been imported, but we need it in our namespace.
-        import requests.exceptions
-
         try:
             j = json.loads(text)
-        except requests.exceptions.JSONDecodeError as e:
+        except json.JSONDecodeError as e:
             _LOGGER.exception(f"JSON error. Body contains: {text.strip()}")
             raise
         except Exception as e:
@@ -230,19 +201,44 @@ class OpenRouter:
             raise
 
         choice = j.get("choices", [{}])[0]
-        # _LOGGER.debug(f'CHOICE: {choice}')
         msg = choice.get("message", {})
         _LOGGER.log(DEBUG_EXTRA, f"RESPONSE: {msg}")
-        # print('KEYS:', msg.keys())
 
         if usage := j.get("usage"):
             print("USAGE:", usage)
 
         return msg.get("content", ""), msg.get("reasoning")
 
-    def fetch_context_length(self, OR_id):
-        """
-        Fetch the advertised context length for a specified model from OpenRouter's API.
+    @stopwatch.Stopwatch()
+    async def invoke(self, payload):
+        import aiohttp
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                self.URL_CHAT,
+                json=payload,
+                headers=self.headers,
+                timeout=aiohttp.ClientTimeout(total=300),
+            ) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    _LOGGER.error(f"LLM error ({resp.status}): {body}")
+                    return None, body
+                text = await resp.text()
+                if not text:
+                    _LOGGER.error("RESPONSE is empty (?)")
+                    raise Exception("empty response")
+                return self.parse(text)
+
+    async def chat_async(self, model_id, system_prompt, messages):
+        payload = {
+            "model": model_id,
+            "messages": [{"role": "system", "content": system_prompt}] + messages,
+        }
+        return await self.invoke(payload)
+
+    async def get_context_limit(self, OR_id):
+        """Fetch the advertised context length for a specified model from OpenRouter's API.
 
         Args:
             OR_id (str): The ID of the model (e.g., 'openai/gpt-4o').
@@ -251,29 +247,23 @@ class OpenRouter:
             int: The context length of the model.
 
         Raises:
-            requests.RequestException: If the API request fails.
+            aiohttp.ClientError: If the API request fails.
             KeyError: If the model is not found or the response lacks expected data.
         """
-        import requests
+        import aiohttp
 
-        response = requests.get(self.URL_MODELS, headers=self.headers)
-        response.raise_for_status()
-        models = response.json()["data"]
+        async with aiohttp.ClientSession() as session:
+            async with session.get(self.URL_MODELS, headers=self.headers) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                for model in data["data"]:
+                    if model["id"] == OR_id:
+                        return model["context_length"]
+                raise KeyError(f"Model '{OR_id}' not found.")
 
-        # print('MODELS:', len(models))
-        for model in models:
-            if model["id"] == OR_id:
-                return model["context_length"]
-
-        raise KeyError(f"Model '{OR_id}' not found.")
-
-    def chat(self, model_id, system_prompt, messages):
-        payload = {
-            "model": model_id,
-            "messages": [{"role": "system", "content": system_prompt}] + messages,
-        }
-        content, reasoning = self.invoke_llm(payload)
-        return content, reasoning
+    invoke_llm = _not_implemented
+    fetch_context_length = _not_implemented
+    chat = _not_implemented
 
 
 def get_sorting_timestamp(timestamps, eps_days=7, min_samples=2):
