@@ -12,7 +12,7 @@ import datetime
 
 from easydict import EasyDict as edict
 
-
+import log_usage
 import stopwatch
 
 _LOGGER = logging.getLogger(__name__)
@@ -205,7 +205,7 @@ class OpenRouter:
         _LOGGER.log(DEBUG_EXTRA, f"RESPONSE: {msg}")
 
         if usage := j.get("usage"):
-            print("USAGE:", usage)
+            log_usage.log_usage(usage)
 
         return msg.get("content", ""), msg.get("reasoning")
 
