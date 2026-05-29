@@ -37,12 +37,38 @@ _LOGGER = logging.getLogger(__name__)
 DEBUG_EXTRA = 5
 
 # Logging color mappings, when sent to stderr/terminal.
+#
+# Design goals:
+# - Good distinguishability between WARNING and ERROR.
+# - No "shouting" on WARNING/ERROR (bold is reserved for CRITICAL only).
+# - Strong readability + visual weight for CRITICAL.
+# - Works well on dark terminals.
+#
+# Final locked palette:
+# - WARNING:  fg_220  (warm, softer yellow — clearly distinct from red without screaming)
+# - CRITICAL: bold + bright white text on dark red background (high contrast + emphasis)
+#
+# Easy alternatives (just swap the string):
+#
+# WARNING (yellow variants):
+#   "fg_220"                   ← current / recommended
+#   "fg_221", "fg_222", "fg_214"
+#   "light_yellow"             (named, no 256-color codes needed)
+#
+# CRITICAL (dark red background + bold text):
+#   "bold,fg_231,bg_88"        ← current (bright white on dark red)
+#   "bold,fg_255,bg_52"        (maximum brightness white on deeper red)
+#   "bold,fg_196,bg_52"        (bright red text on very dark red)
+#   "bold,red,bg_88"           (classic red-on-dark-red)
+#
+# To customize per script, just modify this dict before calling setup_logging().
+# It is the official extension point for the module.
 LOG_COLORS = {
-    "DEBUG": "thin_white",
-    "INFO": "white",
-    "WARNING": "yellow",
-    "ERROR": "red",
-    "CRITICAL": "bold_red,bg_white",
+    "DEBUG":    "thin_white",
+    "INFO":     "white",
+    "WARNING":  "fg_220",               # warm yellow/gold (256-color)
+    "ERROR":    "red",
+    "CRITICAL": "bold,fg_231,bg_88",    # bold bright white on dark red
 }
 
 CLASSIC_DATEFMT = "%m/%d %H:%M:%S"
@@ -211,6 +237,16 @@ if __name__ == "__main__":
         # force_color=True,   # uncomment to force colored output
         # force_color=False,
     )
+
+    # === Palette test lines (easy visual check when running the demo) ===
+    # Run with force_color=True (or in a real terminal) to see the current
+    # LOG_COLORS in action. One clear example of each standard level.
+    _LOGGER.debug("DEBUG   — lowest priority (thin)")
+    _LOGGER.info("INFO    — normal operational messages")
+    _LOGGER.warning("WARNING — something that needs attention")
+    _LOGGER.error("ERROR   — something went wrong")
+    _LOGGER.critical("CRITICAL — loudest / highest severity")
+    # === end palette test ===
 
     _LOGGER.debug("DEBUG message (appears because __main__ was bumped)")
     _LOGGER.info("Normal info line")
